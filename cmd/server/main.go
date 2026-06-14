@@ -79,7 +79,7 @@ func pingHandler(w http.ResponseWriter, r *http.Request) {
 		clientIP = r.RemoteAddr
 	}
 	proto := r.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
+	if proto != "http" && proto != "https" {
 		if r.TLS != nil {
 			proto = "https"
 		} else {
@@ -101,7 +101,7 @@ func pingHandler(w http.ResponseWriter, r *http.Request) {
 <p>In RetroArch, set the WebDAV URL to <code>%s://%s/</code> (with trailing slash).</p>
 </body>`,
 		htmlEscape(r.Host), htmlEscape(clientIP), htmlEscape(proto), htmlEscape(r.Proto),
-		time.Now().UTC().Format(time.RFC3339), proto, htmlEscape(r.Host))
+		time.Now().UTC().Format(time.RFC3339), htmlEscape(proto), htmlEscape(r.Host))
 	slog.Info("ping", "host", r.Host, "client", clientIP, "ua", r.UserAgent())
 }
 
