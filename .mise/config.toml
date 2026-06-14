@@ -1,0 +1,8 @@
+[tools]
+go = "latest"
+
+[tasks."compose:up"]
+run = "docker compose --profile tls up --build -d"
+
+[tasks."compose:logs"]
+run = "docker compose logs -f"

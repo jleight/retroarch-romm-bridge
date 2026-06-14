@@ -1,0 +1,88 @@
+# Local testing with Docker Compose.
+#
+#   Plain HTTP (simplest):     docker compose up --build
+#       -> bridge on http://<this-machine>:8080/
+#
+#   With HTTPS via Caddy:      docker compose --profile tls up --build
+#       -> Caddy terminates TLS on :443 and proxies to the bridge.
+#         Caddy obtains a real Let's Encrypt cert via a Cloudflare DNS-01
+#         challenge, so the service needs NO inbound internet access — only
+#         LAN clients reaching :443. Set SYNC_SITE_ADDRESS (your domain) and
+#         CF_API_TOKEN in .env (see .env.example).
+#
+# Configuration is via environment variables (no config file). ROMM_BASE_URL is
+# required; ROMM_API_TOKEN (a roms.read service token) is recommended. Set them
+# in your shell (e.g. mise) or .env so compose can pass them through.
+
+services:
+  bridge:
+    build: .
+    image: retroarch-romm-bridge:local
+    restart: unless-stopped
+    # Exposed for direct plain-HTTP testing; when fronted by Caddy you can
+    # drop this and reach it only through the proxy.
+    ports:
+      - "8080:8080"
+    environment:
+      # Pulled from the shell/.env (e.g. set via mise). ROMM_BASE_URL is required.
+      ROMM_BASE_URL: ${ROMM_BASE_URL}
+      ROMM_API_TOKEN: ${ROMM_API_TOKEN:-}
+      INDEX_REFRESH_INTERVAL: ${INDEX_REFRESH_INTERVAL:-1h}
+      PLATFORM_MAP: ${PLATFORM_MAP:-}
+      STORE_PATH: /data/pairings.json
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - pairings:/data
+
+  caddy:
+    build:
+      # Caddy with the Cloudflare DNS plugin (for ACME DNS-01), built inline.
+      dockerfile_inline: |
+        FROM caddy:2-builder AS builder
+        RUN xcaddy build --with github.com/caddy-dns/cloudflare
+        FROM caddy:2-alpine
+        COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+    image: retroarch-romm-bridge-caddy:local
+    restart: unless-stopped
+    profiles: ["tls"]
+    depends_on:
+      - bridge
+    environment:
+      # Your domain, e.g. roms-sync.leightha.us
+      SYNC_SITE_ADDRESS: ${SYNC_SITE_ADDRESS:-localhost}
+      # Cloudflare API token with Zone:DNS:Edit on the zone (DNS-01 challenge).
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+    ports:
+      # Only :443 is needed; DNS-01 means no inbound :80 ACME challenge.
+      - "443:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+# Inline file content mounted into the container (Compose >= 2.23.1).
+configs:
+  caddyfile:
+    content: |
+      # Site address from $$SYNC_SITE_ADDRESS; cert via Cloudflare DNS-01 so no
+      # inbound internet ports are required. To run offline self-signed instead,
+      # replace the tls block with `tls internal` and use a localhost address.
+      {$$SYNC_SITE_ADDRESS:localhost} {
+      	reverse_proxy bridge:8080
+
+      	tls {
+      		dns cloudflare {env.CF_API_TOKEN}
+      	}
+
+      	log {
+      		output stdout
+      		format console
+      	}
+      }
+
+volumes:
+  pairings:
+  caddy_data:
+  caddy_config:

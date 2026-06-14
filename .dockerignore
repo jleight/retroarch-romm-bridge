@@ -1,0 +1,7 @@
+.git
+.mise
+deploy
+.env
+compose.yml
+README.md
+*_test.go
