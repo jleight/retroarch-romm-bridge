@@ -193,23 +193,24 @@ func (c *Client) ListRoms(ctx context.Context) ([]Rom, error) {
 // Download streams an asset's bytes via the generic raw-asset route
 // (GET /api/raw/assets/{full_path}), which works for both saves and states.
 // fullPath is the asset's full_path field; it is URL-escaped here. The caller
-// must close the returned ReadCloser.
-func (c *Client) Download(ctx context.Context, fullPath string) (io.ReadCloser, error) {
+// must close the returned ReadCloser. The returned size is the upstream
+// Content-Length, or -1 if RomM didn't advertise one.
+func (c *Client) Download(ctx context.Context, fullPath string) (body io.ReadCloser, size int64, err error) {
 	u := *c.baseU
 	u.Path = "/api/raw/assets/" + fullPath // url.URL escapes Path when sent
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	resp, err := c.do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		return nil, readError(resp)
+		return nil, 0, readError(resp)
 	}
-	return resp.Body, nil
+	return resp.Body, resp.ContentLength, nil
 }
 
 // AssetKind distinguishes the two upload endpoints.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/jleight/retroarch-romm-bridge/internal/mapping"
 )
@@ -99,19 +100,26 @@ func (h *Handler) serveManifest(w http.ResponseWriter, r *http.Request, b *userB
 		http.Error(w, "manifest error", http.StatusBadGateway)
 		return
 	}
+	// Marshal up front so we can send a Content-Length and avoid chunked
+	// transfer-encoding, which RetroArch's HTTP client mishandles.
+	buf, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		slog.Error("encode manifest", "token", b.shortToken(), "err", err)
+		http.Error(w, "manifest error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(buf)))
 	if r.Method == http.MethodHead {
 		return
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(entries); err != nil {
-		slog.Error("encode manifest", "token", b.shortToken(), "err", err)
+	if _, err := w.Write(buf); err != nil {
+		slog.Warn("write manifest", "token", b.shortToken(), "err", err)
 	}
 }
 
 func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request, b *userBackend, key mapping.Key) {
-	body, err := h.svc.Download(r.Context(), b, key)
+	body, size, err := h.svc.Download(r.Context(), b, key)
 	if err != nil {
 		slog.Error("download asset", "token", b.shortToken(), "path", r.URL.Path, "err", err)
 		http.Error(w, "download error", http.StatusBadGateway)
@@ -123,6 +131,13 @@ func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request, b *userBack
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
+	// Advertise the length so the response is sent identity-encoded, not
+	// chunked: RetroArch's net_http sizes its receive buffer from
+	// Content-Length and mishandles chunked transfer-encoding (heap
+	// corruption -> crash mid-sync).
+	if size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
 	if r.Method == http.MethodHead {
 		return
 	}

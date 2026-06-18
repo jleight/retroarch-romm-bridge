@@ -362,13 +362,14 @@ func (s *Service) Manifest(ctx context.Context, b *userBackend) ([]ManifestEntry
 }
 
 // Download resolves a parsed asset key to a RomM asset and returns its bytes.
-// Returns (nil, nil) when no matching asset exists (RetroArch treats 404 as
-// "not present", which is valid).
-func (s *Service) Download(ctx context.Context, b *userBackend, key mapping.Key) (io.ReadCloser, error) {
+// Returns (nil, -1, nil) when no matching asset exists (RetroArch treats 404 as
+// "not present", which is valid). size is the upstream Content-Length, or -1 if
+// unknown.
+func (s *Service) Download(ctx context.Context, b *userBackend, key mapping.Key) (io.ReadCloser, int64, error) {
 	platform := s.cfg.PlatformFor(key.ContentDir)
 	assets, err := s.listKind(ctx, b, key.Kind)
 	if err != nil {
-		return nil, s.afterCall(b, err)
+		return nil, -1, s.afterCall(b, err)
 	}
 	// Prefer the index (authoritative ROM name); fall back to matching the
 	// asset's own name when the index hasn't primed yet (e.g. just after
@@ -380,10 +381,10 @@ func (s *Service) Download(ctx context.Context, b *userBackend, key mapping.Key)
 		match = findByName(assets, platform, key.Stem, key.Ext)
 	}
 	if match == nil {
-		return nil, nil // not found -> 404 (valid "not present")
+		return nil, -1, nil // not found -> 404 (valid "not present")
 	}
-	body, err := b.client.Download(ctx, match.FullPath)
-	return body, s.afterCall(b, err)
+	body, size, err := b.client.Download(ctx, match.FullPath)
+	return body, size, s.afterCall(b, err)
 }
 
 // Store handles an upload (PUT): resolve the ROM, then update the existing
@@ -468,7 +469,7 @@ func (s *Service) stateHash(ctx context.Context, b *userBackend, a romm.Asset) (
 	if h, ok := s.stateHashes.Load(cacheKey); ok {
 		return h.(string), true
 	}
-	body, err := b.client.Download(ctx, a.FullPath)
+	body, _, err := b.client.Download(ctx, a.FullPath)
 	if err != nil {
 		s.afterCall(b, err)
 		slog.Warn("hash state: download failed", "state_id", a.ID, "err", err)
