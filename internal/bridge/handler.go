@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/jleight/retroarch-romm-bridge/internal/mapping"
 )
@@ -160,6 +161,18 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, b *userBacke
 		return
 	}
 
+	// The Steam Deck drops steam_autocloud.vdf into every save folder. It will
+	// never map to a RomM ROM, and a 404 on it aborts RetroArch's entire cloud
+	// sync — so accept-and-discard it. We don't store it; it just re-uploads
+	// each run. Genuine unmapped saves still get a 404 below so the failure is
+	// visible rather than silently dropped.
+	if strings.EqualFold(key.FileName, "steam_autocloud.vdf") {
+		_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxUploadBytes))
+		slog.Debug("discarding steam autocloud marker", "path", r.URL.Path)
+		w.WriteHeader(http.StatusCreated)
+		return
+	}
+
 	content, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxUploadBytes))
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
@@ -168,7 +181,8 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, b *userBacke
 
 	if err := h.svc.Store(r.Context(), b, key, content); err != nil {
 		if IsUnmapped(err) {
-			// Non-fatal for RetroArch: it logs the failed file and continues.
+			// Non-fatal-but-visible: log and 404 so the user can see the file
+			// didn't map. (steam_autocloud.vdf is handled above.)
 			slog.Warn("upload skipped: no matching rom", "token", b.shortToken(), "path", r.URL.Path, "err", err)
 			http.Error(w, "no matching rom in RomM", http.StatusNotFound)
 			return
